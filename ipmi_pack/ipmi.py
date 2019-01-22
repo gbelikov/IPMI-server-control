@@ -31,6 +31,8 @@ class server_ipmi(object):
 				results = None
 		else:
 				results = subp.Popen(execute_command, shell=True, stdout=subp.PIPE).stdout.readlines()
+				if results[1].find('no reading') != -1:
+					results = None
 		return results
 
 	def getIPMIdata(self):
@@ -89,7 +91,7 @@ class server_ipmi(object):
 			else:
 				quick_check_result = False
 				quick_check_log = open('./quick_check_error_log.txt', 'w')
-				quick_check_log.write(time.strftime("%c"), line)
+				quick_check_log.write('{} {}'.format(time.strftime("%c"), line))
 				quick_check_log.close()
 		return quick_check_result#, check_errors
 
@@ -119,19 +121,28 @@ class server_ipmi(object):
 
 
 	def setFanSpeed_Low(self):
-		IPMI_command = " raw 0x30 0x30 0x02 0xff 0x06"
-		self.useIPMI(IPMI_command)
+		''' Sets fan speed to 8%.
 
-
-	def setFanSpeed_Medium(self): #Lowest noise level without annoying whinning of Low.
-		# raw 0x30 0x30 0x02 0xff 0x08 - FANS 1 to 4: 2040 RPM, FAN5:2160 RPM
+		FANS 1 to 4: 2040 RPM, FAN 5:2160 RPM
+		'''
 		IPMI_command = " raw 0x30 0x30 0x02 0xff 0x08"
 		self.useIPMI(IPMI_command)
 
 
-	def setFanSpeed_High(self):
-		# raw 0x30 0x30 0x02 0xff 0x11 - FANS 1 to 5 :3000 RPM
+	def setFanSpeed_Medium(self):
+		''' Sets fan speed to 17%.
+
+		FANS 1 to 5 :3000 RPM
+		'''
 		IPMI_command = " raw 0x30 0x30 0x02 0xff 0x11"
+		self.useIPMI(IPMI_command)
+
+	def setFanSpeed_High(self):
+		''' Sets fan speed to 50%.
+
+		FANS 1 to 4: 6720 RPM, FAN 5:6840 RPM
+		'''
+		IPMI_command = " raw 0x30 0x30 0x02 0xff 0x32"
 		self.useIPMI(IPMI_command)
 
 
@@ -172,6 +183,7 @@ class server_ipmi(object):
 	def fanControl(self):
 
 		def write_fan(value):
+			fan_log = open('./fan_log', 'w')
 			fan_log.write(str(value))
 			fan_log.close()
 
@@ -184,6 +196,8 @@ class server_ipmi(object):
 			)
 			overheating_log_file.close()
 
+		self.getIPMIdata()			# refresh readings
+
 		if self.quickCheck():
 			ambient_temp = self.getAmbientTemp()
 			normal_temp_range = xrange(9, 31) # xrange is better than range here. 30 is max temp 29+1, since range is non inclusive - does not include first and last values
@@ -191,27 +205,31 @@ class server_ipmi(object):
 			if ambient_temp in normal_temp_range:
 				if self.getFanSpeedChange():
 					if not os.path.exists('./fan_log'):
-						fan_log = open('./fan_log', 'w')
 						self.setFanSpeedManual()
 						self.setFanSpeed_Medium()
 						write_fan('Medium')
 					else:
 						fan_log = open('./fan_log', 'r')
 						speed_increase = fan_log.readline()
+						fan_log.close()
 						self.setFanSpeedManual()
-						if speed_increase == "Medium":
-							self.setFanSpeed_High()
-							write_fan('High')
-						# check if I need timeout in case temperature stabilizes with time.
-						if speed_increase == "High":
-							self.setFanSpeedAuto()
-							write_overheating(ambient_temp)
+						if len(speed_increase) == 0:    # in case the file is empty
+							self.setFanSpeed_Medium()
+							write_fan('Medium')
+						else:
+							if speed_increase == "Medium":
+								self.setFanSpeed_High()
+								write_fan('High')
+							# check if I need timeout in case temperature stabilizes with time.
+							if speed_increase == "High":
+								self.setFanSpeedAuto()
+								write_overheating(ambient_temp)
 
 			if ambient_temp in high_temp_range:
 				self.setFanSpeedAuto()
 				write_overheating(ambient_temp)
 
-			if ambient_temp > 35:
+			if ambient_temp >= 35:
 				SHUTDOWN_and_cleanup()
 
 				if os.path.exists('./overheating_log_file.txt'):
@@ -238,7 +256,25 @@ class server_ipmi(object):
 
 
 if __name__ == '__main__':
+	from config import *
+
+	r710 = server_ipmi(IPMI_server_IP, IPMI_username, IPMI_password)
+	r710.powerOn()
+	time.sleep(10)
+	r710.getIPMIdata()
+	timer_fanControl = 300
+
+	if r710.quickCheck():
+		print("Quick check: OK")
+	else:
+		print("Quick check: Failure, check log")
+
+	r710.setFanSpeedManual()
+	r710.setFanSpeed_Low()
+
 	while True:
-		fanControl()
-		print ("Auto fan control, everythins is okay so far.")
-		time.sleep(300)
+		r710.fanControl()
+		print ("Scripted fan control: Temperature is {}, Fan rpm is {}, Power Consumption is{}. \n"
+			.format(r710.getAmbientTemp(), r710.getFanSpeed()[0], r710.getPowerConsumption()))
+		print ("Sleeping for {} seconds \n".format(timer_fanControl))
+		time.sleep(timer_fanControl)

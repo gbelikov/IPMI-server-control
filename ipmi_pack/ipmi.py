@@ -75,7 +75,11 @@ class server_ipmi(object):
 				return filter_result
 		else:
 			print ("Nothing to filter, query_results = None")
-			return None
+			if keyword == "FAN":	#added empty list and string for IBM Watson client when chassis is off
+				nothing = ['']
+			else:
+				nothing = ''
+			return nothing
 
 
 	def quickCheck(self):

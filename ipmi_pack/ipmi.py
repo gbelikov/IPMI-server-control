@@ -31,7 +31,7 @@ class server_ipmi(object):
 				results = None
 		else:
 				results = subp.Popen(execute_command, shell=True, stdout=subp.PIPE).stdout.readlines()
-				if results[1].find('no reading') != -1:
+				if results[1].find('no reading') != -1 or type(results)!= list:
 					results = None
 		return results
 
